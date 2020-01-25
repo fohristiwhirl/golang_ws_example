@@ -48,7 +48,8 @@ func hub() {
 	for {
 
 		// Deal with new / closed connections...
-		// Note that any closed connections need to have their OutChan closed, which allows handler() to return.
+		// Note that any closed connections need to have their OutChan
+		// closed so that absorb_remaining_outgoing() can return.
 
 		ConnectDisconnectLoop:
 		for {
@@ -60,7 +61,8 @@ func hub() {
 				for i := len(connections) - 1; i >= 0; i-- {
 					if connections[i] == dead_conn {
 						connections = append(connections[:i], connections[i + 1:]...)
-						close(dead_conn.OutChan)		// See note above.
+						dead_conn.Conn.Close()
+						close(dead_conn.OutChan)		// See note above re absorb_remaining_outgoing() function
 					}
 				}
 			default:
@@ -86,7 +88,7 @@ func hub() {
 
 		i := rand.Intn(20)
 		if i < len(connections) {
-			connections[i].OutChan <- &Message{Type: "debug", Content: fmt.Sprintf("Randomly generated message")}
+			connections[i].OutChan <- &Message{Type: "debug", Content: fmt.Sprintf("Randomly generated message. Connection count: %d", len(connections))}
 		}
 
 		time.Sleep(50 * time.Millisecond)
@@ -94,11 +96,6 @@ func hub() {
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
-
-	// This function notifies hub() about the new connection. It also
-	// monitors a channel and passes on outgoing messages to the client.
-
-	// This function must only return if the outgoing message channel is closed.
 
 	c, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -112,60 +109,23 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		InChan:		make(chan *Message, 64),		// Chan on which incoming messages are placed.
 		OutChan:	make(chan *Message, 64),		// Chan on which outgoing messages are placed.
 	}
-	defer conn_info.Conn.Close()
 
-	go read_loop(&conn_info)
 	new_conn_chan <- &conn_info
 
-	// It's convenient to actually send outgoing messages in this
-	// function as it simplifies the logic of hub().
+	// Connections support one concurrent reader and one concurrent writer.
 
-	RelayOutGoingMessages:
-	for {
-		select {
-
-		case msg, ok := <- conn_info.OutChan:
-
-			if ok == false {						// Channel is closed. We can return.
-				return
-			}
-
-			b, err := json.Marshal(msg)
-			if err != nil {
-				fmt.Printf("%v\n", err)
-			} else {
-				err = c.WriteMessage(websocket.TextMessage, b)
-				if err != nil {
-					fmt.Printf("%v\n", err)
-					break RelayOutGoingMessages		// Presumably, client disconnected.
-				}
-			}
-
-		default:
-			time.Sleep(50 * time.Millisecond)
-		}
-	}
-
-	// Inform hub() that a WriteMessage() failed. Continue reading messages on the outgoing
-	// channel until it's closed by the hub, for the sake of ensuring there's no deadlock...
-
-	dead_conn_chan <- &conn_info
-
-	for {
-		_, ok := <- conn_info.OutChan
-		if ok == false {
-			break
-		}
-	}
+	go read_loop(&conn_info)
+	go write_loop(&conn_info)
 }
 
 func read_loop(conn_info *Connection) {
 
-	for {
+	// This will generally be the function that spots the connection was closed by the client.
 
+	for {
 		_, b, err := conn_info.Conn.ReadMessage()
 
-		if err != nil {								// Presumably, client disconnected.
+		if err != nil {
 			dead_conn_chan <- conn_info
 			return
 		}
@@ -177,6 +137,44 @@ func read_loop(conn_info *Connection) {
 			fmt.Printf("%v\n", err)
 		} else {
 			conn_info.InChan <- msg
+		}
+	}
+}
+
+func write_loop(conn_info *Connection) {
+
+	for {
+		msg, ok := <- conn_info.OutChan
+
+		if ok == false {							// Channel was closed by hub(). We can return.
+			return
+		}
+
+		b, err := json.Marshal(msg)
+		if err != nil {
+			fmt.Printf("%v\n", err)
+		} else {
+			err = conn_info.Conn.WriteMessage(websocket.TextMessage, b)
+			if err != nil {
+				fmt.Printf("%v\n", err)
+				dead_conn_chan <- conn_info
+				absorb_remaining_outgoing(conn_info)
+				return
+			}
+		}
+	}
+}
+
+func absorb_remaining_outgoing(conn_info *Connection) {
+
+	// Continue reading any messages from hub() that were intended
+	// for a dead connection; this avoids deadlocks. It returns
+	// when the OutChan is closed by hub().
+
+	for {
+		_, ok := <- conn_info.OutChan
+		if ok == false {
+			return
 		}
 	}
 }

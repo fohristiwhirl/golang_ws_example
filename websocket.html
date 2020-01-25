@@ -12,7 +12,7 @@
 
 "use strict";
 
-const socket = new WebSocket('ws://localhost:8080');
+const socket = new WebSocket("ws://localhost:8080");
 
 socket.addEventListener("message", function (event) {
     incoming.innerHTML += event.data + "<br>";

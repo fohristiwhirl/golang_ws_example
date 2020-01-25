@@ -47,6 +47,7 @@ func hub() {
 	for {
 
 		// Deal with new / closed connections...
+		// Note that any closed connections need to have their OutChan closed, which allows handler() to return.
 
 		ConnectDisconnectLoop:
 		for {
@@ -58,7 +59,7 @@ func hub() {
 				for i := len(connections) - 1; i >= 0; i-- {
 					if connections[i] == dead_conn {
 						connections = append(connections[:i], connections[i + 1:]...)
-						close(dead_conn.OutChan)		// Allows new_connection() to return.
+						close(dead_conn.OutChan)
 					}
 				}
 			default:
@@ -85,10 +86,12 @@ func hub() {
 	}
 }
 
-func new_connection(w http.ResponseWriter, r *http.Request) {
+func handler(w http.ResponseWriter, r *http.Request) {
 
 	// This function notifies hub() about the new connection. It also
 	// monitors a channel and passes on outgoing messages to the client.
+
+	// This function must only return if the outgoing message channel is closed.
 
 	c, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -114,7 +117,11 @@ func new_connection(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 
-		case msg := <- conn_info.OutChan:
+		case msg, ok := <- conn_info.OutChan:
+
+			if ok == false {						// Channel is closed. We can return.
+				return
+			}
 
 			b, err := json.Marshal(msg)
 			if err != nil {
@@ -133,7 +140,7 @@ func new_connection(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Inform hub() that the connection is closed. Continue reading messages on the outgoing
+	// Inform hub() that the connection is dead. Continue reading messages on the outgoing
 	// channel until it's closed by the hub, for the sake of ensuring there's no deadlock...
 
 	dead_conn_chan <- &conn_info
@@ -141,7 +148,7 @@ func new_connection(w http.ResponseWriter, r *http.Request) {
 	for {
 		_, ok := <- conn_info.OutChan
 		if ok == false {
-			return
+			break
 		}
 	}
 }
@@ -172,6 +179,6 @@ func main() {
 
 	go hub()
 
-	http.HandleFunc("/", new_connection)
+	http.HandleFunc("/", handler)
 	http.ListenAndServe("127.0.0.1:8080", nil)
 }

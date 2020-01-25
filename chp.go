@@ -156,7 +156,6 @@ func write_loop(conn_info *Connection) {
 		} else {
 			err = conn_info.Conn.WriteMessage(websocket.TextMessage, b)
 			if err != nil {
-				fmt.Printf("%v\n", err)
 				dead_conn_chan <- conn_info
 				absorb_remaining_outgoing(conn_info)
 				return

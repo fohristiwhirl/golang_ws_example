@@ -1,0 +1,27 @@
+<html>
+<head>
+	<title>Test</title>
+</head>
+<body>
+
+<button onclick="send_msg()">Send</button> 
+
+<p id="incoming"></p>
+
+<script>
+
+"use strict";
+
+const socket = new WebSocket('ws://localhost:8080');
+
+socket.addEventListener("message", function (event) {
+    incoming.innerHTML += event.data + "<br>";
+});
+
+function send_msg() {
+	socket.send(`{"type": "test", "content": "Foo!"}`);
+}
+
+</script>
+</body>
+</html>

@@ -91,6 +91,13 @@ func hub() {
 			connections[i].OutChan <- &Message{Type: "debug", Content: fmt.Sprintf("Randomly generated message. Connection count: %d", len(connections))}
 		}
 
+		// If we ever want to close a connection here, it's as follows. Note that
+		// messages added to the OutChan just prior to this likely won't make it.
+		//
+		// connections[i].Conn.Close()
+		// close(connections[i].OutChan)
+		// connections = append(connections[:i], connections[i + 1:]...)
+
 		time.Sleep(50 * time.Millisecond)
 	}
 }

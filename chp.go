@@ -46,30 +46,49 @@ func hub() {
 
 	for {
 
-		select {
+		// Deal with new / closed connections...
 
-		case new_conn := <- new_conn_chan:
+		ConnectDisconnectLoop:
+		for {
+			select {
+			case new_conn := <- new_conn_chan:
+				connections = append(connections, new_conn)
+				new_conn.OutChan <- &Message{Type: "debug", Content: fmt.Sprintf("Hello client %d", new_conn.Id)}
+			case dead_conn := <- dead_conn_chan:
+				for i := len(connections) - 1; i >= 0; i-- {
+					if connections[i] == dead_conn {
+						connections = append(connections[:i], connections[i + 1:]...)
+						close(dead_conn.OutChan)		// Allows new_connection() to return.
+					}
+				}
+			default:
+				break ConnectDisconnectLoop
+			}
+		}
 
-			connections = append(connections, new_conn)
-			new_conn.OutChan <- &Message{Type: "debug", Content: fmt.Sprintf("Hello client %d", new_conn.Id)}
+		// Deal with any incoming messages...
 
-		case dead_conn := <- dead_conn_chan:
-
-			// Note we likely receive multiple notifications of this...
-
-			for i := len(connections) - 1; i >= 0; i-- {
-				if connections[i] == dead_conn {
-					connections = append(connections[:i], connections[i + 1:]...)
+		for _, conn_info := range connections {
+			IncomingMessageLoop:
+			for {
+				select {
+				case msg := <- conn_info.InChan:
+					fmt.Printf("%d: %s: %s\n", conn_info.Id, msg.Type, msg.Content);
+				default:
+					break IncomingMessageLoop
 				}
 			}
-
-		default:
-			time.Sleep(50 * time.Millisecond)
 		}
+
+		time.Sleep(50 * time.Millisecond)
+
 	}
 }
 
-func connection_io(w http.ResponseWriter, r *http.Request) {
+func new_connection(w http.ResponseWriter, r *http.Request) {
+
+	// This function notifies hub() about the new connection. It also
+	// monitors a channel and passes on outgoing messages to the client.
 
 	c, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -88,30 +107,25 @@ func connection_io(w http.ResponseWriter, r *http.Request) {
 	go read_loop(&conn_info)
 	new_conn_chan <- &conn_info
 
-	MainLoop:
+	// It's convenient to actually send outgoing messages in this
+	// function as it simplifies the logic of hub().
+
+	RelayOutGoingMessages:
 	for {
 		select {
-
-		// Messages from client...
-		// We could alternatively handle these in hub()
-
-		case msg := <- conn_info.InChan:
-			fmt.Printf("%s: %s\n", msg.Type, msg.Content);
-
-		// Messages to client...
 
 		case msg := <- conn_info.OutChan:
 
 			b, err := json.Marshal(msg)
 			if err != nil {
 				fmt.Printf("%v\n", err)
-				break						// Breaks the case only.
+				break								// Breaks the case only.
 			}
 
 			err = c.WriteMessage(websocket.TextMessage, b)
 			if err != nil {
 				fmt.Printf("%v\n", err)
-				break MainLoop				// Presumably, client disconnected.
+				break RelayOutGoingMessages			// Presumably, client disconnected.
 			}
 
 		default:
@@ -119,7 +133,17 @@ func connection_io(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Inform hub() that the connection is closed. Continue reading messages on the outgoing
+	// channel until it's closed by the hub, for the sake of ensuring there's no deadlock...
+
 	dead_conn_chan <- &conn_info
+
+	for {
+		_, ok := <- conn_info.OutChan
+		if ok == false {
+			return
+		}
+	}
 }
 
 func read_loop(conn_info *Connection) {
@@ -148,6 +172,6 @@ func main() {
 
 	go hub()
 
-	http.HandleFunc("/", connection_io)
+	http.HandleFunc("/", new_connection)
 	http.ListenAndServe("127.0.0.1:8080", nil)
 }

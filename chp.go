@@ -59,7 +59,7 @@ func hub() {
 				for i := len(connections) - 1; i >= 0; i-- {
 					if connections[i] == dead_conn {
 						connections = append(connections[:i], connections[i + 1:]...)
-						close(dead_conn.OutChan)
+						close(dead_conn.OutChan)		// See note above.
 					}
 				}
 			default:
@@ -82,7 +82,6 @@ func hub() {
 		}
 
 		time.Sleep(50 * time.Millisecond)
-
 	}
 }
 
@@ -126,13 +125,12 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			b, err := json.Marshal(msg)
 			if err != nil {
 				fmt.Printf("%v\n", err)
-				break								// Breaks the case only.
-			}
-
-			err = c.WriteMessage(websocket.TextMessage, b)
-			if err != nil {
-				fmt.Printf("%v\n", err)
-				break RelayOutGoingMessages			// Presumably, client disconnected.
+			} else {
+				err = c.WriteMessage(websocket.TextMessage, b)
+				if err != nil {
+					fmt.Printf("%v\n", err)
+					break RelayOutGoingMessages		// Presumably, client disconnected.
+				}
 			}
 
 		default:
@@ -140,7 +138,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Inform hub() that the connection is dead. Continue reading messages on the outgoing
+	// Inform hub() that a WriteMessage() failed. Continue reading messages on the outgoing
 	// channel until it's closed by the hub, for the sake of ensuring there's no deadlock...
 
 	dead_conn_chan <- &conn_info

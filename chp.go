@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"time"
 
@@ -79,6 +80,13 @@ func hub() {
 					break IncomingMessageLoop
 				}
 			}
+		}
+
+		// Do whatever else we need to do...
+
+		i := rand.Intn(20)
+		if i < len(connections) {
+			connections[i].OutChan <- &Message{Type: "debug", Content: fmt.Sprintf("Randomly generated message")}
 		}
 
 		time.Sleep(50 * time.Millisecond)

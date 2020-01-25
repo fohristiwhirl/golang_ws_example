@@ -37,7 +37,7 @@ var conn_id_generator = ConnIdGenerator{}
 var new_conn_chan = make(chan *Connection, 64)
 var dead_conn_chan = make(chan *Connection, 64)
 
-func check_origin(r *http.Request) bool {				// FIXME
+func check_origin(r *http.Request) bool {			// FIXME
 	return true
 }
 
@@ -165,7 +165,7 @@ func read_loop(conn_info *Connection) {
 
 		_, b, err := conn_info.Conn.ReadMessage()
 
-		if err != nil {						// Presumably, client disconnected.
+		if err != nil {								// Presumably, client disconnected.
 			dead_conn_chan <- conn_info
 			return
 		}

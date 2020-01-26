@@ -11,19 +11,28 @@ import (
 )
 
 type Message struct {
-	Type		string				`json:"type"`
-	Content		string				`json:"content"`
+	Cid				int					`json:"-"`
+	Type			string				`json:"type"`
+	Content			string				`json:"content"`
 }
 
-type Connection struct {
-	Conn		*websocket.Conn
-	Id			int
-	InChan		chan Message
-	OutChan		chan Message
+type NewConnection struct {				// Contains the minimum info needed to register a new connection.
+	Conn			*websocket.Conn
+	Cid				int
+	InChan			chan Message
+	OutChan			chan Message
+}
+
+type Connection struct {				// This could contain additional state as needed.
+	Conn			*websocket.Conn
+	Cid				int
+	InChan			chan Message
+	OutChan			chan Message
+	Authenticated	bool
 }
 
 type ConnIdGenerator struct {
-	val			int
+	val				int
 }
 
 func (self *ConnIdGenerator) Next() int {
@@ -33,7 +42,7 @@ func (self *ConnIdGenerator) Next() int {
 
 var upgrader = websocket.Upgrader{CheckOrigin: check_origin}
 var conn_id_generator = ConnIdGenerator{}
-var new_conn_chan = make(chan Connection, 64)
+var new_conn_chan = make(chan NewConnection, 64)
 
 func check_origin(r *http.Request) bool {			// FIXME
 	return true
@@ -46,6 +55,7 @@ func hub() {
 
 	var connections []Connection
 	var pending_closures []int
+	var incoming_messages []Message
 
 	for {
 
@@ -53,26 +63,37 @@ func hub() {
 
 		ConnectLoop:
 		for {
+
 			select {
-			case new_conn := <- new_conn_chan:
-				connections = append(connections, new_conn)
+
+			case inc := <- new_conn_chan:
+
+				var c = Connection{
+							Conn:			inc.Conn,
+							Cid:			inc.Cid,
+							InChan:			inc.InChan,
+							OutChan:		inc.OutChan,
+							Authenticated:	false}
+
+				connections = append(connections, c)
+
 			default:
 				break ConnectLoop
 			}
 		}
 
-		// Deal with any incoming messages. We may also learn of connections that
+		// Learn about incoming messages. We may also learn of connections that
 		// were closed by the client (in which case InChan will have been closed).
 
 		LoopOverConnections:
-		for _, conn_info := range connections {
+		for _, c := range connections {
 			for {
 				select {
-				case msg, ok := <- conn_info.InChan:
+				case msg, ok := <- c.InChan:
 					if ok {
-						fmt.Printf("%d: %s: %s\n", conn_info.Id, msg.Type, msg.Content);
+						incoming_messages = append(incoming_messages, msg)
 					} else {
-						pending_closures = append(pending_closures, conn_info.Id)
+						pending_closures = append(pending_closures, c.Cid)
 						continue LoopOverConnections
 					}
 				default:
@@ -81,14 +102,23 @@ func hub() {
 			}
 		}
 
+		// Actually deal with the incoming messages...
+		// Don't assume the client responsible for the message is still connected.
+
+		for _, m := range incoming_messages {
+			fmt.Printf("%d: %s: %s\n", m.Cid, m.Type, m.Content)
+		}
+
+		incoming_messages = nil
+
 		// Finalise the closure of dead or closing connections...
 
 		for _, id := range pending_closures {
 			for i := len(connections) - 1; i >= 0; i-- {
-				if connections[i].Id == id {
+				if connections[i].Cid == id {
 					connections[i].Conn.Close()
 					close(connections[i].OutChan)		// This must only happen once.
-					fmt.Printf("hub() has registered the closure of connection %d.\n", connections[i].Id)
+					fmt.Printf("hub() has registered the closure of connection %d.\n", connections[i].Cid)
 					connections = append(connections[:i], connections[i + 1:]...)
 					break
 				}
@@ -121,24 +151,25 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cid := conn_id_generator.Next()
 	in_chan := make(chan Message, 64)
 	out_chan := make(chan Message, 64)
 
-	new_conn_chan <- Connection{Conn: c, Id: conn_id_generator.Next(), InChan: in_chan, OutChan: out_chan}
+	new_conn_chan <- NewConnection{Conn: c, Cid: cid, InChan: in_chan, OutChan: out_chan}
 
 	// Connections support one concurrent reader and one concurrent writer.
 
-	go read_loop(c, in_chan)
+	go read_loop(c, in_chan, cid)
 	go write_loop(c, out_chan)
 }
 
-func read_loop(c *websocket.Conn, incoming_messages chan Message) {
+func read_loop(c *websocket.Conn, msg_to_hub chan Message, cid int) {
 
 	for {
 		_, b, err := c.ReadMessage()
 
 		if err != nil {
-			close(incoming_messages)				// Lets the hub know the connection is closed.
+			close(msg_to_hub)				// Lets the hub know the connection is closed.
 			return
 		}
 
@@ -148,17 +179,18 @@ func read_loop(c *websocket.Conn, incoming_messages chan Message) {
 		if err != nil {
 			fmt.Printf("%v\n", err)
 		} else {
-			incoming_messages <- msg
+			msg.Cid = cid					// Make sure the message has the client's unique ID.
+			msg_to_hub <- msg
 		}
 	}
 }
 
-func write_loop(c *websocket.Conn, outgoing_messages chan Message) {
+func write_loop(c *websocket.Conn, msg_from_hub chan Message) {
 
 	for {
-		msg, ok := <- outgoing_messages
+		msg, ok := <- msg_from_hub
 
-		if ok == false {							// Channel was closed by hub(). We are done.
+		if ok == false {					// Channel was closed by hub(). We are done.
 			return
 		}
 

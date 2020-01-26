@@ -21,14 +21,6 @@ type NewConnection struct {				// Contains the minimum info needed to register a
 	OutChan			chan Message
 }
 
-type Connection struct {				// This could contain additional state as needed.
-	Conn			*websocket.Conn
-	Cid				int
-	InChan			chan Message
-	OutChan			chan Message
-	Authenticated	bool
-}
-
 var upgrader = websocket.Upgrader{CheckOrigin: check_origin}
 var new_conn_chan = make(chan NewConnection, 64)
 

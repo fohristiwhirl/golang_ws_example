@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"math/rand"
 	"time"
-)
 
+	"github.com/gorilla/websocket"
+)
 
 type Hub struct {
 	connections			[]Connection
@@ -13,11 +14,17 @@ type Hub struct {
 	incoming_messages	[]Message
 }
 
+type Connection struct {						// This could contain additional state as needed.
+	Conn				*websocket.Conn
+	Cid					int
+	InChan				chan Message
+	OutChan				chan Message
+	Authenticated		bool
+}
 
 func (self *Hub) RegisterNewConnections() {
 
 	for {
-
 		select {
 
 		case inc := <- new_conn_chan:
@@ -32,13 +39,10 @@ func (self *Hub) RegisterNewConnections() {
 			self.connections = append(self.connections, c)
 
 		default:
-
 			return
-
 		}
 	}
 }
-
 
 func (self *Hub) GetIncomingMessages() {
 
@@ -63,7 +67,6 @@ func (self *Hub) GetIncomingMessages() {
 	return
 }
 
-
 func (self *Hub) HandleClosures() {
 
 	for _, id := range self.pending_closures {
@@ -81,7 +84,6 @@ func (self *Hub) HandleClosures() {
 	self.pending_closures = nil
 }
 
-
 func (self *Hub) HandleMessages() {
 
 	for _, m := range self.incoming_messages {
@@ -90,7 +92,6 @@ func (self *Hub) HandleMessages() {
 
 	self.incoming_messages = nil
 }
-
 
 func (self *Hub) Spin() {
 

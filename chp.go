@@ -18,8 +18,8 @@ type Message struct {
 type Connection struct {
 	Conn		*websocket.Conn
 	Id			int
-	InChan		chan *Message		// Chan on which incoming messages are placed.
-	OutChan		chan *Message		// Chan on which outgoing messages are placed.
+	InChan		chan *Message
+	OutChan		chan *Message		// Note that closing this channel signals that hub() is aware the connection closed.
 }
 
 type ConnIdGenerator struct {
@@ -44,31 +44,39 @@ func check_origin(r *http.Request) bool {			// FIXME
 func hub() {
 
 	var connections []*Connection
+	var pending_closures []*Connection
 
 	for {
 
-		// Deal with new / closed connections...
-		// Note that any closed connections need to have their OutChan
-		// closed so that absorb_remaining_outgoing() can return.
+		// Register new / dead connections...
 
 		ConnectDisconnectLoop:
 		for {
 			select {
 			case new_conn := <- new_conn_chan:
 				connections = append(connections, new_conn)
-				new_conn.OutChan <- &Message{Type: "debug", Content: fmt.Sprintf("Hello client %d", new_conn.Id)}
 			case dead_conn := <- dead_conn_chan:
-				for i := len(connections) - 1; i >= 0; i-- {
-					if connections[i] == dead_conn {
-						connections = append(connections[:i], connections[i + 1:]...)
-						dead_conn.Conn.Close()
-						close(dead_conn.OutChan)		// See note above re absorb_remaining_outgoing() function
-					}
-				}
+				pending_closures = append(pending_closures, dead_conn)
 			default:
 				break ConnectDisconnectLoop
 			}
 		}
+
+		// Finalise the closure of dead or closing connections...
+
+		for _, c := range pending_closures {
+			for i := len(connections) - 1; i >= 0; i-- {
+				if connections[i] == c {
+					connections = append(connections[:i], connections[i + 1:]...)
+					c.Conn.Close()
+					close(c.OutChan)		// This must only happen once.
+					fmt.Printf("hub() has registered the closure of connection %d.\n", c.Id)
+					break
+				}
+			}
+		}
+
+		pending_closures = nil
 
 		// Deal with any incoming messages...
 
@@ -94,9 +102,7 @@ func hub() {
 		// If we ever want to close a connection here, it's as follows. Note that
 		// messages added to the OutChan just prior to this likely won't make it.
 		//
-		// connections[i].Conn.Close()
-		// close(connections[i].OutChan)
-		// connections = append(connections[:i], connections[i + 1:]...)
+		// pending_closures = append(pending_closures, connections[i])
 
 		time.Sleep(50 * time.Millisecond)
 	}

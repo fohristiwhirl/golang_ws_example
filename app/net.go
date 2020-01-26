@@ -8,19 +8,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-type Message struct {
-	Cid				int					`json:"-"`
-	Type			string				`json:"type"`
-	Content			string				`json:"content"`
-}
-
-type NewConnection struct {				// Contains the minimum info needed to register a new connection.
-	Conn			*websocket.Conn
-	Cid				int
-	InChan			chan Message
-	OutChan			chan Message
-}
-
 var upgrader = websocket.Upgrader{CheckOrigin: check_origin}
 var new_conn_chan = make(chan NewConnection, 64)
 

@@ -4,22 +4,12 @@ import (
 	"fmt"
 	"math/rand"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 type Hub struct {
 	connections			[]Connection
 	pending_closures	[]int
 	incoming_messages	[]Message
-}
-
-type Connection struct {						// This could contain additional state as needed.
-	Conn				*websocket.Conn
-	Cid					int
-	InChan				chan Message
-	OutChan				chan Message
-	Authenticated		bool
 }
 
 func (self *Hub) RegisterNewConnections() {

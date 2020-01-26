@@ -79,7 +79,7 @@ func (self *Hub) CloseConnection(cid int) {
 			close(self.connections[i].OutChan)
 			self.connections = append(self.connections[:i], self.connections[i + 1:]...)
 
-			fmt.Printf("hub() has registered the closure of connection %d.\n", cid)
+			fmt.Printf("Hub has registered the closure of connection %d.\n", cid)
 			return
 		}
 	}

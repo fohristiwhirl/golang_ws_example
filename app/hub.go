@@ -61,10 +61,14 @@ func (self *Hub) HandleClosures() {
 
 	for _, id := range self.pending_closures {
 		for i := len(self.connections) - 1; i >= 0; i-- {
+
 			if self.connections[i].Cid == id {
+
 				self.connections[i].Conn.Close()
-				close(self.connections[i].OutChan)		// This must only happen once.
+				close(self.connections[i].OutChan)		// This results in the writer goroutine stopping.
+
 				fmt.Printf("hub() has registered the closure of connection %d.\n", self.connections[i].Cid)
+
 				self.connections = append(self.connections[:i], self.connections[i + 1:]...)
 				break
 			}

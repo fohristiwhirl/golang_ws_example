@@ -59,23 +59,30 @@ func (self *Hub) GetIncomingMessages() {
 
 func (self *Hub) HandleClosures() {
 
-	for _, id := range self.pending_closures {
-		for i := len(self.connections) - 1; i >= 0; i-- {
-
-			if self.connections[i].Cid == id {
-
-				self.connections[i].Conn.Close()
-				close(self.connections[i].OutChan)		// This results in the writer goroutine stopping.
-
-				fmt.Printf("hub() has registered the closure of connection %d.\n", self.connections[i].Cid)
-
-				self.connections = append(self.connections[:i], self.connections[i + 1:]...)
-				break
-			}
-		}
+	for _, cid := range self.pending_closures {
+		self.CloseConnection(cid)
 	}
 
 	self.pending_closures = nil
+}
+
+func (self *Hub) CloseConnection(cid int) {
+
+	// Close the actual underlying websocket conn.
+	// Close the OutChan (results in the writer goroutine stopping).
+	// Remove connection from our list of connections.
+
+	for i := len(self.connections) - 1; i >= 0; i-- {
+		if self.connections[i].Cid == cid {
+
+			self.connections[i].Conn.Close()
+			close(self.connections[i].OutChan)
+			self.connections = append(self.connections[:i], self.connections[i + 1:]...)
+
+			fmt.Printf("hub() has registered the closure of connection %d.\n", cid)
+			return
+		}
+	}
 }
 
 func (self *Hub) HandleMessages() {

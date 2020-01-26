@@ -18,8 +18,8 @@ type Message struct {
 type Connection struct {
 	Conn		*websocket.Conn
 	Id			int
-	InChan		chan *Message
-	OutChan		chan *Message		// Note that closing this channel signals that hub() is aware the connection closed.
+	InChan		chan Message
+	OutChan		chan Message
 }
 
 type ConnIdGenerator struct {
@@ -33,9 +33,7 @@ func (self *ConnIdGenerator) Next() int {
 
 var upgrader = websocket.Upgrader{CheckOrigin: check_origin}
 var conn_id_generator = ConnIdGenerator{}
-
-var new_conn_chan = make(chan *Connection, 64)
-var dead_conn_chan = make(chan *Connection, 64)
+var new_conn_chan = make(chan Connection, 64)
 
 func check_origin(r *http.Request) bool {			// FIXME
 	return true
@@ -43,34 +41,52 @@ func check_origin(r *http.Request) bool {			// FIXME
 
 func hub() {
 
-	var connections []*Connection
-	var pending_closures []*Connection
+	var connections []Connection
+	var pending_closures []int
 
 	for {
 
-		// Register new / dead connections...
+		// Register new connections...
 
-		ConnectDisconnectLoop:
+		ConnectLoop:
 		for {
 			select {
 			case new_conn := <- new_conn_chan:
 				connections = append(connections, new_conn)
-			case dead_conn := <- dead_conn_chan:
-				pending_closures = append(pending_closures, dead_conn)
 			default:
-				break ConnectDisconnectLoop
+				break ConnectLoop
+			}
+		}
+
+		// Deal with any incoming messages. We may also learn of connections that
+		// were closed by the client (in which case InChan will have been closed).
+
+		LoopOverConnections:
+		for _, conn_info := range connections {
+			for {
+				select {
+				case msg, ok := <- conn_info.InChan:
+					if ok {
+						fmt.Printf("%d: %s: %s\n", conn_info.Id, msg.Type, msg.Content);
+					} else {
+						pending_closures = append(pending_closures, conn_info.Id)
+						continue LoopOverConnections
+					}
+				default:
+					continue LoopOverConnections
+				}
 			}
 		}
 
 		// Finalise the closure of dead or closing connections...
 
-		for _, c := range pending_closures {
+		for _, id := range pending_closures {
 			for i := len(connections) - 1; i >= 0; i-- {
-				if connections[i] == c {
+				if connections[i].Id == id {
+					connections[i].Conn.Close()
+					close(connections[i].OutChan)		// This must only happen once.
+					fmt.Printf("hub() has registered the closure of connection %d.\n", connections[i].Id)
 					connections = append(connections[:i], connections[i + 1:]...)
-					c.Conn.Close()
-					close(c.OutChan)		// This must only happen once.
-					fmt.Printf("hub() has registered the closure of connection %d.\n", c.Id)
 					break
 				}
 			}
@@ -78,31 +94,17 @@ func hub() {
 
 		pending_closures = nil
 
-		// Deal with any incoming messages...
-
-		for _, conn_info := range connections {
-			IncomingMessageLoop:
-			for {
-				select {
-				case msg := <- conn_info.InChan:
-					fmt.Printf("%d: %s: %s\n", conn_info.Id, msg.Type, msg.Content);
-				default:
-					break IncomingMessageLoop
-				}
-			}
-		}
-
 		// Do whatever else we need to do...
 
 		i := rand.Intn(20)
 		if i < len(connections) {
-			connections[i].OutChan <- &Message{Type: "debug", Content: fmt.Sprintf("Randomly generated message. Connection count: %d", len(connections))}
+			connections[i].OutChan <- Message{Type: "debug", Content: fmt.Sprintf("Randomly generated message. Connection count: %d", len(connections))}
 		}
 
 		// If we ever want to close a connection here, it's as follows. Note that
 		// messages added to the OutChan just prior to this likely won't make it.
 		//
-		// pending_closures = append(pending_closures, connections[i])
+		// pending_closures = append(pending_closures, connections[i].Id)
 
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -116,50 +118,44 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn_info := Connection{
-		Conn:		c,
-		Id:			conn_id_generator.Next(),
-		InChan:		make(chan *Message, 64),		// Chan on which incoming messages are placed.
-		OutChan:	make(chan *Message, 64),		// Chan on which outgoing messages are placed.
-	}
+	in_chan := make(chan Message, 64)
+	out_chan := make(chan Message, 64)
 
-	new_conn_chan <- &conn_info
+	new_conn_chan <- Connection{Conn: c, Id: conn_id_generator.Next(), InChan: in_chan, OutChan: out_chan}
 
 	// Connections support one concurrent reader and one concurrent writer.
 
-	go read_loop(&conn_info)
-	go write_loop(&conn_info)
+	go read_loop(c, in_chan)
+	go write_loop(c, out_chan)
 }
 
-func read_loop(conn_info *Connection) {
-
-	// This will generally be the function that spots the connection was closed by the client.
+func read_loop(c *websocket.Conn, incoming_messages chan Message) {
 
 	for {
-		_, b, err := conn_info.Conn.ReadMessage()
+		_, b, err := c.ReadMessage()
 
 		if err != nil {
-			dead_conn_chan <- conn_info
+			close(incoming_messages)				// Lets the hub know the connection is closed.
 			return
 		}
 
-		msg := new(Message)
-		err = json.Unmarshal(b, msg)
+		var msg Message
+		err = json.Unmarshal(b, &msg)
 
 		if err != nil {
 			fmt.Printf("%v\n", err)
 		} else {
-			conn_info.InChan <- msg
+			incoming_messages <- msg
 		}
 	}
 }
 
-func write_loop(conn_info *Connection) {
+func write_loop(c *websocket.Conn, outgoing_messages chan Message) {
 
 	for {
-		msg, ok := <- conn_info.OutChan
+		msg, ok := <- outgoing_messages
 
-		if ok == false {							// Channel was closed by hub(). We can return.
+		if ok == false {							// Channel was closed by hub(). We are done.
 			return
 		}
 
@@ -167,26 +163,7 @@ func write_loop(conn_info *Connection) {
 		if err != nil {
 			fmt.Printf("%v\n", err)
 		} else {
-			err = conn_info.Conn.WriteMessage(websocket.TextMessage, b)
-			if err != nil {
-				dead_conn_chan <- conn_info
-				absorb_remaining_outgoing(conn_info)
-				return
-			}
-		}
-	}
-}
-
-func absorb_remaining_outgoing(conn_info *Connection) {
-
-	// Continue reading any messages from hub() that were intended
-	// for a dead connection; this avoids deadlocks. It returns
-	// when the OutChan is closed by hub().
-
-	for {
-		_, ok := <- conn_info.OutChan
-		if ok == false {
-			return
+			c.WriteMessage(websocket.TextMessage, b)
 		}
 	}
 }

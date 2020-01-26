@@ -38,7 +38,8 @@ func handler(w http.ResponseWriter, r *http.Request) {
 func read_loop(c *websocket.Conn, msg_to_hub chan Message, cid int) {
 
 	// Closes when ReadMessage() fails. At that time, it also
-	// closes the incoming message channel, which Hub can spot.
+	// closes the incoming message channel, which Hub can spot
+	// (if it still has this connection in its list).
 
 	for {
 		_, b, err := c.ReadMessage()

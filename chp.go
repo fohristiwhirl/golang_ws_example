@@ -41,6 +41,9 @@ func check_origin(r *http.Request) bool {			// FIXME
 
 func hub() {
 
+	// Note that this must not directly read or write messages to the connections.
+	// Rather, the read_loop() and write_loop() goroutines do that.
+
 	var connections []Connection
 	var pending_closures []int
 

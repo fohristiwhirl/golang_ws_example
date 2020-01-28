@@ -15,6 +15,17 @@ func check_origin(r *http.Request) bool {			// FIXME
 	return true
 }
 
+// When a new connection comes in, various things happen:
+//
+// - Information about the connection is sent to the Hub.
+//
+// - An output goroutine starts; it reads from a channel and relays messages to the client.
+//   The Hub can close the channel to cause this goroutine to exit.
+//
+// - An input goroutine starts; it reads from the client and sends messages into a channel.
+//   The Hub should read these messages. The goroutine closes the channel and exits if the
+//   connection is closed.
+
 func handler(w http.ResponseWriter, r *http.Request) {
 
 	c, err := upgrader.Upgrade(w, r, nil)

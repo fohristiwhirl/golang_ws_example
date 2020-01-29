@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"math/rand"
 	"time"
 )
 
@@ -88,10 +87,16 @@ func (self *Hub) CloseConnection(cid int) {
 func (self *Hub) HandleMessages() {
 
 	for _, m := range self.incoming_messages {
-		fmt.Printf("%d: %s: %s\n", m.Cid, m.Type, m.Content)
+		self.SendGlobally(fmt.Sprintf("Client %d: %s", m.Cid, m.Content))
 	}
 
 	self.incoming_messages = nil
+}
+
+func (self *Hub) SendGlobally(msg string) {
+	for _, c := range self.connections {
+		c.OutChan <- msg
+	}
 }
 
 func (self *Hub) Spin() {
@@ -102,11 +107,6 @@ func (self *Hub) Spin() {
 		self.GetIncomingMessages()
 		self.HandleClosures()
 		self.HandleMessages()
-
-		i := rand.Intn(20)
-		if i < len(self.connections) {
-			self.connections[i].OutChan <- Message{Type: "debug", Content: fmt.Sprintf("Randomly generated message. Connection count: %d", len(self.connections))}
-		}
 
 		time.Sleep(50 * time.Millisecond)
 	}

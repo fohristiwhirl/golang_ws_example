@@ -4,6 +4,8 @@
 </head>
 <body>
 
+<input type="text" id="msgbox" value="">
+
 <button onclick="send_msg()">Send</button> 
 
 <p id="incoming"></p>
@@ -18,8 +20,13 @@ socket.addEventListener("message", function (event) {
     incoming.innerHTML += event.data + "<br>";
 });
 
+msgbox.addEventListener("keydown", (event) => {
+	if (event.key === "Enter") send_msg();
+});
+
 function send_msg() {
-	socket.send(`{"type": "test", "content": "Foo!"}`);
+	socket.send(msgbox.value);
+	msgbox.value = "";
 }
 
 </script>

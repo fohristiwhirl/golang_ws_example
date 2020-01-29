@@ -1,7 +1,6 @@
 package app
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -36,7 +35,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	cid := conn_id_generator.Next()
 	in_chan := make(chan Message, 64)
-	out_chan := make(chan Message, 64)
+	out_chan := make(chan string, 64)
 
 	new_conn_chan <- NewConnection{Conn: c, Cid: cid, InChan: in_chan, OutChan: out_chan}
 
@@ -48,10 +47,6 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 func read_loop(c *websocket.Conn, msg_to_hub chan Message, cid int) {
 
-	// Closes when ReadMessage() fails. At that time, it also
-	// closes the incoming message channel, which Hub can spot
-	// (if it still has this connection in its list).
-
 	for {
 		_, b, err := c.ReadMessage()
 
@@ -60,21 +55,11 @@ func read_loop(c *websocket.Conn, msg_to_hub chan Message, cid int) {
 			return
 		}
 
-		var msg Message
-		err = json.Unmarshal(b, &msg)
-
-		if err != nil {
-			fmt.Printf("%v\n", err)
-		} else {
-			msg.Cid = cid					// Make sure the message has the client's unique ID.
-			msg_to_hub <- msg
-		}
+		msg_to_hub <- Message{Cid: cid, Content: string(b)}
 	}
 }
 
-func write_loop(c *websocket.Conn, msg_from_hub chan Message) {
-
-	// Closes when the outgoing message channel is closed.
+func write_loop(c *websocket.Conn, msg_from_hub chan string) {
 
 	for {
 		msg, ok := <- msg_from_hub
@@ -83,11 +68,6 @@ func write_loop(c *websocket.Conn, msg_from_hub chan Message) {
 			return
 		}
 
-		b, err := json.Marshal(msg)
-		if err != nil {
-			fmt.Printf("%v\n", err)
-		} else {
-			c.WriteMessage(websocket.TextMessage, b)
-		}
+		c.WriteMessage(websocket.TextMessage, []byte(msg))
 	}
 }
